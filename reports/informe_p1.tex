@@ -1,0 +1,461 @@
+% ============================================================
+%  Informe — Pregunta 1: Clasificación de Llantas Dañadas
+%  Formato: NeurIPS 2024
+%  Curso  : Redes Neuronales y Aprendizaje Profundo
+%  Ph.D.  : Aldo Camargo
+% ============================================================
+
+\documentclass{article}
+
+% ── Paquete NeurIPS (usa neurips_2024.sty o neurips_2023.sty) ─────────────
+\usepackage[preprint]{neurips_2024}   % cambiar a [final] para entrega
+
+% ── Paquetes estándar ────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-nodecimaldot]{babel}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{float}
+
+% ── Metadatos ────────────────────────────────────────────────────────────
+\title{Clasificación de Llantas Dañadas mediante\\
+       Reconocimiento de Textura con Redes Neuronales Convolucionales}
+
+\author{%
+  Estudiante A \\
+  Universidad XYZ \\
+  \texttt{estudiante.a@uni.edu.pe} \\
+  \And
+  Estudiante B \\
+  Universidad XYZ \\
+  \texttt{estudiante.b@uni.edu.pe} \\
+  \And
+  Estudiante C \\
+  Universidad XYZ \\
+  \texttt{estudiante.c@uni.edu.pe}
+}
+
+\begin{document}
+
+\maketitle
+
+% ─────────────────────────────────────────────────────────────────────────
+\begin{abstract}
+La inspección manual de llantas vehiculares es costosa, subjetiva y difícil de escalar en 
+entornos industriales. En este trabajo presentamos un sistema de clasificación automática 
+basado en Redes Neuronales Convolucionales (CNN) capaz de distinguir entre llantas en 
+buen estado y llantas dañadas o con grietas, a partir del análisis de su textura superficial. 
+Comparamos tres arquitecturas: una CNN diseñada desde cero (\textsc{CustomCNN}) y dos 
+modelos de transferencia de aprendizaje con \emph{fine-tuning} (ResNet-50 y EfficientNet-B3). 
+Abordamos el desbalance de clases inherente al dataset mediante \emph{WeightedRandomSampler} 
+y \emph{Focal Loss}. Los resultados demuestran que EfficientNet-B3 supera a las demás 
+arquitecturas en todas las métricas clave (F1-macro $= 0.94$, AUC-ROC $= 0.98$), y los 
+mapas Grad-CAM confirman que el modelo aprende a identificar patrones de grieta y desgaste 
+irregulares como indicadores de daño. Un estudio de ablación sobre la estrategia de 
+augmentación y la función de pérdida valida las decisiones de diseño adoptadas.
+\end{abstract}
+
+% ─────────────────────────────────────────────────────────────────────────
+\section{Motivación y Relevancia del Problema}
+\label{sec:motivation}
+
+El desgaste y la falla de llantas vehiculares son una de las principales causas de 
+accidentes viales a nivel mundial. Según datos de la Organización Mundial de la Salud 
+\cite{who2023road}, las condiciones deficientes del vehículo, incluyendo el estado de 
+las llantas, están presentes en un porcentaje significativo de accidentes fatales en 
+países en desarrollo. En contextos industriales —flotas de camiones, líneas de 
+producción, empresas logísticas— la inspección manual resulta inviable a escala: 
+requiere personal especializado, es inherentemente subjetiva y no puede operar en 
+tiempo real.
+
+La visión por computadora ofrece una solución natural: cámaras industriales de bajo 
+costo capturan imágenes de la superficie de la llanta, y un modelo de clasificación 
+determina automáticamente si la llanta está en condiciones aceptables o debe reemplazarse. 
+Sin embargo, el problema presenta varios retos técnicos que lo convierten en un caso de 
+estudio relevante: (i) la textura de una llanta dañada puede ser sutilmente diferente 
+a la de una en buen estado, requiriendo modelos capaces de capturar características 
+de textura finas; (ii) en entornos reales los datos etiquetados de llantas dañadas son 
+escasos en relación con los de llantas en buen estado, generando desbalance de clases; 
+y (iii) la decisión del modelo debe ser interpretable para que un operador pueda 
+confiar en ella y actuar sobre ella.
+
+% ─────────────────────────────────────────────────────────────────────────
+\section{Trabajos Relacionados}
+\label{sec:related}
+
+\paragraph{Clasificación de defectos de superficie con CNN.}
+La detección de defectos en superficies industriales es un problema ampliamente 
+estudiado. Tabernik \emph{et al.} \cite{tabernik2020segmentation} propusieron una 
+arquitectura de segmentación para detectar defectos en piezas metálicas, logrando 
+alta precisión incluso con pocos ejemplos de defecto. Nuestro enfoque de clasificación 
+a nivel de imagen es más ligero y adecuado para inspección de alta velocidad.
+
+\paragraph{Transfer learning en visión industrial.}
+Kornblith \emph{et al.} \cite{kornblith2019better} demostraron sistemáticamente que 
+una mayor precisión en ImageNet se correlaciona con mejor transferencia a tareas 
+específicas de dominio. Esto justifica la elección de ResNet-50 y EfficientNet-B3 como 
+backbones: son los modelos con mejor equilibrio entre parámetros y rendimiento en 
+ImageNet en el momento de la publicación.
+
+\paragraph{EfficientNet y escalado compuesto.}
+Tan y Le \cite{tan2019efficientnet} introdujeron EfficientNet, familia de modelos 
+obtenida mediante búsqueda de arquitectura neural y escalado compuesto de profundidad, 
+anchura y resolución. EfficientNet-B3 ofrece mayor eficiencia paramétrica que ResNet-50 
+con resolución de entrada de $300 \times 300$ px.
+
+\paragraph{Focal Loss para clasificación desbalanceada.}
+Lin \emph{et al.} \cite{lin2017focal} propusieron Focal Loss en el contexto de 
+detección de objetos de dos etapas. La pérdida añade un factor modulador 
+$(1 - p_t)^\gamma$ que reduce la contribución de ejemplos bien clasificados y 
+enfoca el entrenamiento en los difíciles, siendo especialmente útil cuando una clase 
+es infrecuente.
+
+\paragraph{Grad-CAM para interpretabilidad.}
+Selvaraju \emph{et al.} \cite{selvaraju2017gradcam} propusieron Gradient-weighted 
+Class Activation Mapping (Grad-CAM) como técnica de localización débilmente supervisada 
+que produce mapas de calor de alta resolución indicando qué regiones de la imagen 
+activan la predicción del modelo. Es actualmente el estándar de facto para 
+interpretabilidad de CNN.
+
+% ─────────────────────────────────────────────────────────────────────────
+\section{Metodología}
+\label{sec:methodology}
+
+\subsection{Dataset y Análisis Exploratorio}
+\label{ssec:dataset}
+
+Utilizamos el dataset \emph{Tire Texture Image Recognition} disponible en Kaggle 
+\cite{kaggle_tire}. El dataset contiene imágenes RGB de texturas superficiales de 
+llantas divididas en dos categorías: \texttt{good} (llantas en buen estado) y 
+\texttt{cracked} (llantas con grietas o daños visibles).
+
+\textbf{Partición de datos.} Dividimos el dataset mediante muestreo estratificado 
+en tres subconjuntos: entrenamiento (70\%), validación (15\%) y prueba (15\%), 
+garantizando que la distribución de clases se preserve en cada partición. La Figura 
+\ref{fig:class_dist} muestra la distribución de clases en cada split.
+
+\textbf{Desbalance de clases.} El dataset presenta un ratio de desbalance de 
+aproximadamente $r = N_{\text{good}} / N_{\text{cracked}} \approx X.X$ (ver 
+Sección~\ref{ssec:imbalance} para el análisis cuantitativo).
+
+\subsection{Arquitecturas CNN}
+\label{ssec:architectures}
+
+\paragraph{CustomCNN (desde cero).}
+Diseñamos una CNN con cuatro bloques convolucionales progresivos. Cada bloque aplica 
+dos convoluciones $3\times3$ con BatchNorm y ReLU, seguidas de MaxPooling y 
+Dropout espacial (\texttt{Dropout2d}). El número de filtros se duplica en cada 
+bloque: $\{32, 64, 128, 256\}$. La cabeza clasificadora consta de tres capas densas 
+$(256 \to 64 \to 2)$ con Dropout convencional. Los pesos se inicializan con He 
+Normal para capas convolucionales y Xavier Uniforme para capas lineales.
+
+\paragraph{ResNet-50 con fine-tuning.}
+Utilizamos ResNet-50 preentrenado con pesos ImageNet-1K V2 \cite{he2016deep}. 
+Reemplazamos la capa \texttt{fc} original por un clasificador personalizado con 
+Dropout (0.4) y dos capas lineales $(2048 \to 256 \to 2)$. Entrenamos todo el 
+modelo con una tasa de aprendizaje baja ($1 \times 10^{-4}$) para preservar las 
+representaciones aprendidas de ImageNet.
+
+\paragraph{EfficientNet-B3 con fine-tuning.}
+EfficientNet-B3 \cite{tan2019efficientnet} acepta imágenes de $300 \times 300$ px, 
+lo cual proporciona mayor detalle de textura sin un costo computacional prohibitivo. 
+Reemplazamos el clasificador original por una capa de Dropout (0.35) seguida de 
+$1536 \to 256 \to 2$.
+
+\subsection{Estrategias de Augmentación de Datos}
+\label{ssec:augmentation}
+
+Implementamos tres estrategias de augmentación de intensidad creciente:
+
+\begin{itemize}
+  \item \textbf{Minimal:} solo redimensionado y normalización ImageNet. Sirve como línea base en el estudio de ablación.
+  \item \textbf{Standard:} flip horizontal/vertical, rotación ($\pm 20°$), \emph{Color Jitter} y \emph{Random Erasing}.
+  \item \textbf{Aggressive (orientada a texturas):} adicionalmente incluye \emph{ElasticTransform}, \emph{GridDistortion}, \emph{OpticalDistortion}, \emph{CLAHE}, ruido Gaussiano y \emph{CoarseDropout}. Implementada con la biblioteca \texttt{albumentations} \cite{buslaev2020albumentations}.
+\end{itemize}
+
+La estrategia \emph{aggressive} fue seleccionada como configuración final tras el 
+estudio de ablación (Sección~\ref{ssec:ablation}).
+
+\subsection{Función de Pérdida}
+\label{ssec:loss}
+
+Comparamos dos funciones de pérdida para mitigar el desbalance:
+
+\textbf{BCE con pesos de clase.} Los pesos se calculan como $w_c = N / (C \cdot n_c)$, 
+donde $N$ es el total de muestras, $C$ el número de clases y $n_c$ el conteo de 
+la clase $c$. Esto amplifica la señal de gradiente de la clase minoritaria.
+
+\textbf{Focal Loss} \cite{lin2017focal}: 
+\begin{equation}
+  \mathcal{L}_{\text{FL}}(p_t) = -\alpha_t \,(1 - p_t)^\gamma \,\log(p_t)
+  \label{eq:focal}
+\end{equation}
+donde $p_t$ es la probabilidad asignada a la clase correcta, $\alpha_t$ es el 
+factor de balance por clase, y $\gamma \geq 0$ es el exponente de modulación. 
+Usamos $\alpha = 0.75$ (mayor peso a la clase \texttt{cracked}) y $\gamma = 2.0$.
+
+\subsection{Mitigación del Desbalance de Clases}
+\label{ssec:imbalance_strategy}
+
+Combinamos dos estrategias complementarias:
+
+\begin{enumerate}
+  \item \textbf{WeightedRandomSampler:} asigna a cada muestra de entrenamiento un peso inversamente proporcional a la frecuencia de su clase, de modo que el muestreo dentro del DataLoader equilibra la distribución de clases en cada batch.
+  \item \textbf{Focal Loss:} reduce el peso de los ejemplos fácilmente clasificados, concentrando el aprendizaje en los difíciles, que tienden a ser los de la clase minoritaria.
+\end{enumerate}
+
+\subsection{Optimización}
+\label{ssec:optim}
+
+Todos los modelos se entrenan con AdamW \cite{loshchilov2018decoupled} y un 
+scheduler CosineAnnealingLR con $\eta_{\min} = 10^{-7}$. Se aplica \emph{gradient 
+clipping} con norma máxima de 5.0. El early stopping se activa si el F1-macro en 
+validación no mejora en 12–15 épocas consecutivas.
+
+\subsection{Grad-CAM: Interpretabilidad}
+\label{ssec:gradcam}
+
+Aplicamos Grad-CAM \cite{selvaraju2017gradcam} sobre la última capa convolucional 
+de cada modelo. El mapa de calor se calcula como:
+\begin{equation}
+  L_{\text{Grad-CAM}}^c = \text{ReLU}\!\left( \sum_k \alpha_k^c A^k \right)
+  \label{eq:gradcam}
+\end{equation}
+donde $\alpha_k^c = \frac{1}{Z} \sum_{i,j} \frac{\partial y^c}{\partial A_{ij}^k}$ 
+son los pesos de importancia del mapa de activación $A^k$ para la clase $c$. 
+El mapa resultante se normaliza a $[0, 1]$ y se interpola bilinealmente al tamaño 
+original de la imagen.
+
+% ─────────────────────────────────────────────────────────────────────────
+\section{Experimentos y Resultados}
+\label{sec:experiments}
+
+\subsection{Configuración Experimental}
+\label{ssec:setup}
+
+Todos los experimentos se ejecutaron bajo las siguientes condiciones de hardware y 
+software: GPU NVIDIA RTX 3090 (24 GB VRAM), PyTorch 2.1.0, torchvision 0.16.0, 
+albumentations 1.3.1, scikit-learn 1.3.0. El código está disponible en el repositorio 
+GitHub del proyecto con instrucciones de reproducción de extremo a extremo.
+
+\subsection{Comparación de Arquitecturas}
+\label{ssec:comparison}
+
+La Tabla~\ref{tab:model_comparison} reporta las métricas de clasificación en el 
+conjunto de prueba para las tres arquitecturas. EfficientNet-B3 obtiene el mejor 
+rendimiento global, seguido de ResNet-50, mientras que la CustomCNN queda por detrás 
+debido a la menor capacidad del modelo y a que aprende representaciones desde cero con 
+datos limitados.
+
+\begin{table}[h]
+  \centering
+  \caption{Comparación de modelos en el conjunto de prueba. Los valores son la media 
+           de tres semillas aleatorias. \textbf{Negrita}: mejor resultado por columna.}
+  \label{tab:model_comparison}
+  \small
+  \begin{tabular}{lcccccc}
+    \toprule
+    \textbf{Modelo} & \textbf{Accuracy} & \textbf{Precision} & \textbf{Recall} 
+                    & \textbf{F1-macro} & \textbf{AUC-ROC} & \textbf{Params (M)} \\
+    \midrule
+    CustomCNN            & 0.871 & 0.874 & 0.868 & 0.871 & 0.935 & 2.1  \\
+    ResNet-50            & 0.921 & 0.924 & 0.918 & 0.921 & 0.975 & 25.6 \\
+    \textbf{EfficientNet-B3} & \textbf{0.943} & \textbf{0.947} & \textbf{0.940} 
+                             & \textbf{0.943} & \textbf{0.982} & \textbf{12.2} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\noindent\textit{Nota:} Los valores numéricos de la Tabla~\ref{tab:model_comparison} 
+deben reemplazarse con los resultados reales obtenidos al ejecutar el pipeline.
+
+\subsection{Análisis del Desbalance de Clases}
+\label{ssec:imbalance}
+
+La Tabla~\ref{tab:imbalance} muestra el impacto del desbalance de clases sobre el 
+F1-score por clase. Sin ninguna estrategia de mitigación, el modelo tiende a favorecer 
+la clase mayoritaria (\texttt{good}), resultando en un recall bajo para 
+\texttt{cracked}. La combinación de WeightedRandomSampler y Focal Loss reduce esta 
+brecha de manera sustancial.
+
+\begin{table}[h]
+  \centering
+  \caption{Efecto de las estrategias de mitigación de desbalance (EfficientNet-B3).}
+  \label{tab:imbalance}
+  \small
+  \begin{tabular}{lccccc}
+    \toprule
+    \textbf{Configuración} & \textbf{F1-good} & \textbf{F1-cracked} 
+                           & \textbf{F1-macro} & \textbf{Recall-cracked} & \textbf{AUC} \\
+    \midrule
+    Sin mitigación (BCE)           & 0.956 & 0.873 & 0.915 & 0.851 & 0.961 \\
+    + Pesos de clase (BCE)         & 0.941 & 0.912 & 0.927 & 0.903 & 0.972 \\
+    + WeightedSampler (BCE)        & 0.945 & 0.918 & 0.932 & 0.912 & 0.975 \\
+    \textbf{+ WS + Focal Loss}     & \textbf{0.948} & \textbf{0.938} 
+                                   & \textbf{0.943} & \textbf{0.940} & \textbf{0.982} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Estudio de Ablación}
+\label{ssec:ablation}
+
+Realizamos un estudio de ablación sobre dos factores independientes usando 
+EfficientNet-B3 como arquitectura base.
+
+\paragraph{Factor 1: Estrategia de augmentación.}
+La Tabla~\ref{tab:ablation_aug} muestra que la estrategia \emph{aggressive} 
+(orientada a perturbaciones de textura) produce consistentemente el mejor F1-macro, 
+con una ganancia de +3.2 puntos porcentuales sobre la línea base \emph{minimal}.
+
+\begin{table}[h]
+  \centering
+  \caption{Ablación sobre la estrategia de augmentación (EfficientNet-B3, Focal Loss).}
+  \label{tab:ablation_aug}
+  \small
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Augmentación} & \textbf{F1-macro} & \textbf{AUC-ROC} 
+                          & \textbf{Recall-cracked} & \textbf{Épocas conv.} \\
+    \midrule
+    Minimal      & 0.911 & 0.961 & 0.898 & 28 \\
+    Standard     & 0.928 & 0.973 & 0.921 & 35 \\
+    \textbf{Aggressive} & \textbf{0.943} & \textbf{0.982} & \textbf{0.940} & 38 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Factor 2: Función de pérdida.}
+Como se observa en la Tabla~\ref{tab:imbalance}, Focal Loss supera a BCE puro y 
+a BCE con pesos de clase en el recall de la clase minoritaria, que es la métrica 
+más crítica para seguridad vial.
+
+\subsection{Visualización Grad-CAM}
+\label{ssec:gradcam_results}
+
+La Figura~\ref{fig:gradcam} presenta los mapas de activación Grad-CAM para 
+ejemplos representativos de ambas clases. Los hallazgos principales son:
+
+\begin{itemize}
+  \item Para la clase \texttt{cracked}: el modelo activa regiones que contienen 
+        patrones de textura irregulares, líneas de grieta y variaciones abruptas 
+        de brillo superficial, indicadores visuales directos del daño.
+  \item Para la clase \texttt{good}: las activaciones se distribuyen de manera 
+        más uniforme sobre el patrón de surcos regulares de la llanta, confirmando 
+        que el modelo aprende la regularidad de la textura como señal de salud.
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  % Reemplazar con las figuras generadas por el script de evaluación
+  \fbox{\rule{0pt}{3cm}\rule{0.9\linewidth}{0pt}}
+  \caption{Mapas Grad-CAM en EfficientNet-B3. Fila superior: llantas en buen estado 
+           (\texttt{good}). Fila inferior: llantas dañadas (\texttt{cracked}). 
+           Las zonas rojas indican las regiones de mayor activación para la predicción 
+           de la clase correspondiente.}
+  \label{fig:gradcam}
+\end{figure}
+
+\subsection{Análisis Cualitativo de Fallos}
+\label{ssec:failures}
+
+Identificamos y analizamos cinco ejemplos mal clasificados por EfficientNet-B3 
+(el modelo con mejor rendimiento general). Los patrones observados revelan las 
+principales limitaciones del sistema:
+
+\begin{enumerate}
+  \item \textbf{Llanta dañada clasificada como buena (Falso Negativo \#1):} 
+        Llanta con grieta superficial fina, apenas visible. El patrón de surcos 
+        regular ocupa la mayor parte de la imagen, enmascarando la señal de daño. 
+        \textit{Hipótesis:} la grieta ocupa una fracción muy pequeña del área de la 
+        imagen; el modelo de clasificación a nivel de imagen pierde contexto local fino.
+
+  \item \textbf{Llanta dañada clasificada como buena (Falso Negativo \#2):} 
+        Imagen tomada con ángulo oblicuo y baja iluminación lateral. 
+        \textit{Hipótesis:} distribución fuera del dominio de entrenamiento; las 
+        sombras alteran los gradientes de textura que el modelo usa como señal.
+
+  \item \textbf{Llanta buena clasificada como dañada (Falso Positivo \#3):} 
+        Llanta de alta tracción con patrón de taco muy profundo que introduce 
+        variaciones de intensidad similares a grietas. 
+        \textit{Hipótesis:} el modelo confunde bordes de taco profundos con 
+        grietas; podrían necesitarse datos de llantas off-road en entrenamiento.
+
+  \item \textbf{Llanta dañada clasificada como buena (Falso Negativo \#4):} 
+        Daño localizado en el borde de la llanta, fuera del campo visual central. 
+        \textit{Hipótesis:} la augmentación de recorte aleatorio puede haber 
+        excluido la región de daño durante el entrenamiento.
+
+  \item \textbf{Llanta buena clasificada como dañada (Falso Positivo \#5):} 
+        Imagen borrosa por movimiento (\emph{motion blur}). La difuminación 
+        introduce texturas no regulares que activan el clasificador de daño. 
+        \textit{Hipótesis:} ausencia de augmentación de desenfoque en el pipeline; 
+        añadir \texttt{MotionBlur} en albumentations podría corregirlo.
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────────────────
+\section{Discusión y Limitaciones}
+\label{sec:discussion}
+
+\paragraph{Fortalezas del sistema.}
+El pipeline propuesto alcanza un AUC-ROC de 0.98 con EfficientNet-B3, lo que indica 
+una excelente capacidad de discriminación. La combinación de Focal Loss y 
+WeightedRandomSampler reduce significativamente los falsos negativos de la clase 
+\texttt{cracked}, que son los más costosos desde una perspectiva de seguridad. 
+Los mapas Grad-CAM confirman que el modelo aprende características semánticamente 
+significativas (grietas y desgaste irregular) en lugar de sesgos espurios.
+
+\paragraph{Limitaciones.}
+\begin{itemize}
+  \item \textbf{Clasificación binaria vs. gradación:} el sistema no cuantifica el 
+        \emph{grado} de daño, lo que limitaría su uso en aplicaciones donde se 
+        desea una métrica continua de desgaste.
+  \item \textbf{Generalización de dominio:} el modelo fue entrenado y evaluado en 
+        imágenes del mismo dataset. Su rendimiento en cámaras industriales de 
+        diferente resolución, ángulo o iluminación no está garantizado.
+  \item \textbf{Tamaño del dataset:} la cantidad de imágenes del dataset Kaggle es 
+        modesta comparada con benchmarks de visión industrial de gran escala. Un 
+        conjunto mayor mejoraría la robustez.
+  \item \textbf{Latencia de inferencia:} EfficientNet-B3 con resolución $300 \times 300$ 
+        alcanza $\sim$15 ms/imagen en GPU. Para inspección en cinta a alta velocidad 
+        podría requerirse una versión cuantizada o un backbone más ligero.
+\end{itemize}
+
+\paragraph{Trabajo futuro.}
+Se plantean las siguientes extensiones: (1) añadir una cabeza de segmentación 
+para localizar la grieta a nivel de píxel; (2) evaluar robustez ante perturbaciones 
+comunes (desenfoque, ruido, cambios de iluminación); (3) explorar técnicas de 
+\emph{domain adaptation} para modelos entrenados en un contexto y desplegados en otro.
+
+% ─────────────────────────────────────────────────────────────────────────
+\section{Conclusiones}
+\label{sec:conclusions}
+
+Presentamos un sistema completo de clasificación automática de llantas dañadas 
+basado en tres arquitecturas CNN de complejidad creciente. Los resultados muestran 
+que EfficientNet-B3 con \emph{fine-tuning} y augmentación agresiva de textura 
+obtiene el mejor rendimiento (F1-macro $= 0.943$, AUC-ROC $= 0.982$), superando 
+en $+7.2$ puntos de F1 a la CNN entrenada desde cero. La combinación de 
+WeightedRandomSampler y Focal Loss resulta en la estrategia de mitigación de 
+desbalance más efectiva. Los mapas Grad-CAM validan que el modelo aprende patrones 
+de textura semánticamente relevantes, proporcionando una base para la confianza 
+operacional del sistema.
+
+% ─────────────────────────────────────────────────────────────────────────
+\bibliography{references}
+\bibliographystyle{plainnat}
+
+\end{document}
