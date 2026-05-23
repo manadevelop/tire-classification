@@ -1,0 +1,10 @@
+data/
+__pycache__/
+*.pyc
+*.pt
+logs/
+.DS_Store
+*.aux
+*.log
+*.out
+*.pdf
