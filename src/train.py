@@ -1,13 +1,6 @@
 """
 train.py — Entrenamiento de modelos CNN para clasificación de llantas dañadas.
 
-Soporta:
-  - CNN desde cero (CustomCNN)
-  - Transfer learning con ResNet-50 y EfficientNet-B3
-  - Estrategias de mitigación de desbalance de clases
-  - Función de pérdida Focal Loss
-  - Aumento de datos orientado
-
 Uso:
   python src/train.py --config configs/train_scratch.yaml
   python src/train.py --config configs/train_resnet50.yaml
@@ -24,8 +17,14 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.optim.lr_scheduler import CosineAnnealingLR
-import wandb
 from pathlib import Path
+
+# wandb es opcional — no falla si no está instalado
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
 
 from models.custom_cnn import CustomCNN
 from models.transfer_model import TransferModel
@@ -47,7 +46,7 @@ def set_seed(seed: int = 42):
 
 
 def build_model(cfg: dict) -> nn.Module:
-    model_name = cfg["model"]["name"]
+    model_name  = cfg["model"]["name"]
     num_classes = cfg["model"]["num_classes"]
 
     if model_name == "custom_cnn":
@@ -70,22 +69,18 @@ def build_model(cfg: dict) -> nn.Module:
 
 def build_loss(cfg: dict, class_weights: torch.Tensor = None) -> nn.Module:
     loss_name = cfg["training"]["loss"]
-    device = cfg["device"]
+    device    = cfg["device"]
 
     if loss_name == "bce":
         if class_weights is not None:
             pos_weight = class_weights[1] / class_weights[0]
-            return nn.BCEWithLogitsLoss(
-                pos_weight=pos_weight.to(device)
-            )
+            return nn.BCEWithLogitsLoss(pos_weight=pos_weight.to(device))
         return nn.BCEWithLogitsLoss()
-
     elif loss_name == "focal":
         return FocalLoss(
             alpha=cfg["training"].get("focal_alpha", 0.25),
             gamma=cfg["training"].get("focal_gamma", 2.0),
         )
-
     elif loss_name == "cross_entropy":
         if class_weights is not None:
             return nn.CrossEntropyLoss(weight=class_weights.to(device))
@@ -95,13 +90,12 @@ def build_loss(cfg: dict, class_weights: torch.Tensor = None) -> nn.Module:
 
 
 def build_sampler(dataset: TireDataset, cfg: dict):
-    """WeightedRandomSampler para mitigar desbalance de clases."""
     if not cfg["training"].get("use_weighted_sampler", False):
         return None
 
-    labels = [dataset[i][1] for i in range(len(dataset))]
-    class_counts = np.bincount(labels)
-    class_weights = 1.0 / class_counts
+    labels         = [dataset[i][1] for i in range(len(dataset))]
+    class_counts   = np.bincount(labels)
+    class_weights  = 1.0 / class_counts
     sample_weights = [class_weights[l] for l in labels]
 
     return WeightedRandomSampler(
@@ -118,13 +112,12 @@ def main(cfg_path: str):
     set_seed(cfg.get("seed", 42))
     logger = setup_logger(cfg["experiment_name"])
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device        = "cuda" if torch.cuda.is_available() else "cpu"
     cfg["device"] = device
     logger.info(f"Dispositivo: {device}")
 
-    # ── Datasets ───────────────────────────────────────────────────────────
     data_root = cfg["data"]["root"]
-    img_size = cfg["data"]["img_size"]
+    img_size  = cfg["data"]["img_size"]
 
     train_ds = TireDataset(
         root=os.path.join(data_root, "train"),
@@ -146,47 +139,47 @@ def main(cfg_path: str):
         f"Train: {len(train_ds)} | Val: {len(val_ds)} | Test: {len(test_ds)}"
     )
 
-    # ── Sampler y DataLoaders ───────────────────────────────────────────────
-    sampler = build_sampler(train_ds, cfg)
-    shuffle = sampler is None
+    sampler     = build_sampler(train_ds, cfg)
+    shuffle     = sampler is None
+    num_workers = cfg["training"].get("num_workers", 2)
 
     train_loader = DataLoader(
         train_ds,
         batch_size=cfg["training"]["batch_size"],
         shuffle=shuffle,
         sampler=sampler,
-        num_workers=cfg["training"].get("num_workers", 4),
+        num_workers=num_workers,
         pin_memory=True,
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=cfg["training"]["batch_size"] * 2,
         shuffle=False,
-        num_workers=cfg["training"].get("num_workers", 4),
+        num_workers=num_workers,
         pin_memory=True,
     )
     test_loader = DataLoader(
         test_ds,
         batch_size=cfg["training"]["batch_size"] * 2,
         shuffle=False,
-        num_workers=cfg["training"].get("num_workers", 4),
+        num_workers=num_workers,
         pin_memory=True,
     )
 
-    # ── Modelo ─────────────────────────────────────────────────────────────
     model = build_model(cfg).to(device)
-    logger.info(f"Parámetros totales: {sum(p.numel() for p in model.parameters()):,}")
+    logger.info(
+        f"Parámetros totales: "
+        f"{sum(p.numel() for p in model.parameters()):,}"
+    )
 
-    # ── Pérdida ────────────────────────────────────────────────────────────
     class_weights = None
     if cfg["training"].get("use_class_weights", False):
-        labels = [train_ds[i][1] for i in range(len(train_ds))]
+        labels        = [train_ds[i][1] for i in range(len(train_ds))]
         class_weights = compute_class_weights(labels)
         logger.info(f"Pesos de clase: {class_weights}")
 
     criterion = build_loss(cfg, class_weights)
 
-    # ── Optimizador ────────────────────────────────────────────────────────
     optimizer = optim.AdamW(
         model.parameters(),
         lr=cfg["training"]["lr"],
@@ -198,11 +191,20 @@ def main(cfg_path: str):
         eta_min=cfg["training"].get("lr_min", 1e-6),
     )
 
-    # ── W&B ────────────────────────────────────────────────────────────────
-    if cfg.get("use_wandb", False):
-        wandb.init(project="tire-classification", name=cfg["experiment_name"], config=cfg)
+    # W&B opcional
+    use_wandb = cfg.get("use_wandb", False) and WANDB_AVAILABLE
+    if use_wandb:
+        wandb.init(
+            project="tire-classification",
+            name=cfg["experiment_name"],
+            config=cfg,
+        )
+    elif cfg.get("use_wandb", False) and not WANDB_AVAILABLE:
+        logger.warning(
+            "use_wandb=true pero wandb no está instalado. "
+            "Ejecuta: pip install wandb"
+        )
 
-    # ── Entrenamiento ──────────────────────────────────────────────────────
     output_dir = Path(cfg["output_dir"]) / cfg["experiment_name"]
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -219,11 +221,10 @@ def main(cfg_path: str):
 
     trainer.fit(train_loader, val_loader, epochs=cfg["training"]["epochs"])
 
-    # ── Evaluación final en test ───────────────────────────────────────────
     logger.info("Evaluando en conjunto de prueba...")
     trainer.evaluate(test_loader, split="test")
 
-    if cfg.get("use_wandb", False):
+    if use_wandb:
         wandb.finish()
 
 

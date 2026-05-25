@@ -93,10 +93,13 @@ def get_train_transforms(
             A.RandomGamma(gamma_limit=(70, 130), p=0.4),
             A.CLAHE(clip_limit=4.0, p=0.3),
             # Ruido y oclusión parcial
-            A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
+            # VERSIÓN CORRECTA para albumentations 2.0.8
+            A.GaussNoise(p=0.3),
             A.CoarseDropout(
-                max_holes=8, max_height=16, max_width=16,
-                min_holes=1, fill_value=0, p=0.3,
+                num_holes_range=(1, 8),
+                hole_height_range=(8, 16),
+                hole_width_range=(8, 16),
+                p=0.3,
             ),
             A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
             ToTensorV2(),
