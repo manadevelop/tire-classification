@@ -21,7 +21,7 @@ model:
 training:
   epochs: 40
   batch_size: 32
-  num_workers: 4
+  num_workers: 2
   lr: 1.0e-4                 # LR más baja para fine-tuning
   lr_min: 1.0e-7
   weight_decay: 5.0e-5

@@ -1,10 +1,13 @@
+# Modelos pesados
+*.pt
+*.pth
+
+# Dataset
 data/
+
+# Temporales
 __pycache__/
 *.pyc
-*.pt
-logs/
 .DS_Store
-*.aux
-*.log
-*.out
-*.pdf
+.ipynb_checkpoints/
+kaggle.json

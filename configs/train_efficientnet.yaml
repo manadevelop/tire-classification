@@ -21,7 +21,7 @@ model:
 training:
   epochs: 40
   batch_size: 24           # batch más pequeño por resolución mayor
-  num_workers: 4
+  num_workers: 2
   lr: 8.0e-5
   lr_min: 1.0e-7
   weight_decay: 5.0e-5
